@@ -7,7 +7,6 @@ import asyncio
 import io
 import requests
 
-# Enable all required intents
 intents = discord.Intents.default()
 intents.members = True
 intents.guilds = True
@@ -25,35 +24,23 @@ LEAVE_CHANNEL_ID = 1484477721303056405
 BANNED_CHANNEL_ID = 1484477767604109312
 
 invites = {}
-join_log = {}
 
 @bot.event
 async def on_ready():
-    print(f"KeyZone Guard is online as {bot.user}")
+    print(f"KeyZone Guard is online!")
     for guild in bot.guilds:
         try:
             invites[guild.id] = await guild.invites()
         except:
             invites[guild.id] = []
 
-# ======================
-# MEMBER JOIN (Welcome Image + Invite Tracker)
-# ======================
 @bot.event
 async def on_member_join(member):
     guild = member.guild
     welcome_chan = guild.get_channel(WELCOME_CHANNEL_ID)
     invite_chan = guild.get_channel(INVITE_CHANNEL_ID)
     
-    # 1. ANTI-RAID
-    now = datetime.datetime.utcnow().timestamp()
-    if guild.id not in join_log: join_log[guild.id] = []
-    join_log[guild.id].append(now)
-    join_log[guild.id] = [t for t in join_log[guild.id] if now - t < 10]
-    if len(join_log[guild.id]) >= 5 and guild.system_channel:
-        await guild.system_channel.send("⚠️ **Anti-Raid Alert!** Multiple users joined quickly.")
-
-    # 2. INVITE TRACKER LOGIC
+    # 1. Invite Tracking
     used_invite = None
     try:
         new_invites = await guild.invites()
@@ -65,51 +52,55 @@ async def on_member_join(member):
         invites[guild.id] = new_invites
     except:
         pass
+    inviter_name = used_invite.inviter.name if used_invite else "Unknown"
 
-    inviter = used_invite.inviter if used_invite else None
-    inviter_name = inviter.name if inviter else "Unknown"
-
-    # 3. SEND TO INVITE CHANNEL
+    # 2. Invite Channel Log
     if invite_chan:
-        msg = f"📩 **{member.name}** joined using invite from **{inviter.mention if inviter else 'Unknown'}**"
-        await invite_chan.send(msg)
+        await invite_chan.send(f"📩 **{member.name}** was invited by **{inviter_name}**")
 
-    # 4. GENERATE WELCOME IMAGE
+    # 3. Image Generation
     try:
+        # Load Background
         bg = Image.open("welcome_bg.png").convert("RGBA")
         draw = ImageDraw.Draw(bg)
         
+        # Load Font (Tries font.ttf, then Arial, then default)
         try:
-            font_name = ImageFont.truetype("font.ttf", 65)
-            font_info = ImageFont.truetype("font.ttf", 40)
+            font_name = ImageFont.truetype("font.ttf", 60)
+            font_sub = ImageFont.truetype("font.ttf", 40)
         except:
-            font_name = font_info = ImageFont.load_default()
+            print("Warning: font.ttf not found. Using default.")
+            font_name = font_sub = ImageFont.load_default()
 
-        # Process Avatar
+        # Avatar Processing
         url = member.avatar.url if member.avatar else member.default_avatar.url
-        avatar_img = Image.open(io.BytesIO(requests.get(url).content)).convert("RGBA")
+        response = requests.get(url)
+        avatar_img = Image.open(io.BytesIO(response.content)).convert("RGBA")
         avatar_img = avatar_img.resize((260, 260), Image.Resampling.LANCZOS)
         
         mask = Image.new("L", (260, 260), 0)
         ImageDraw.Draw(mask).ellipse((0, 0, 260, 260), fill=255)
         
-        # Paste data over the template
+        # Draw on template
         bg.paste(avatar_img, (652, 280), mask) 
         draw.text((70, 410), f"{member.name}", fill="white", font=font_name)
-        draw.text((715, 712), f"{inviter_name}", fill="white", font=font_info)
-        draw.text((455, 905), f"Member #{len(guild.members)}", fill="white", font=font_info)
+        draw.text((715, 712), f"{inviter_name}", fill="white", font=font_sub)
+        draw.text((455, 905), f"Member #{len(guild.members)}", fill="white", font=font_sub)
 
+        # Send Image
         with io.BytesIO() as out:
             bg.save(out, format="PNG")
             out.seek(0)
             if welcome_chan:
                 await welcome_chan.send(f"Welcome {member.mention}!", file=discord.File(out, "welcome.png"))
+                
     except Exception as e:
-        print(f"Image Error: {e}")
-        if welcome_chan: await welcome_chan.send(f"Welcome {member.mention} to KeyZone!")
+        print(f"IMAGE ERROR DETAILS: {e}") # Check Railway logs for this message!
+        if welcome_chan:
+            await welcome_chan.send(f"Welcome {member.mention} to KeyZone! (Image failed to load)")
 
 # ======================
-# MEMBER LEAVE (No Double-Post)
+# LEAVE & BAN LOGS
 # ======================
 @bot.event
 async def on_member_remove(member):
@@ -120,44 +111,17 @@ async def on_member_remove(member):
     except discord.NotFound:
         chan = member.guild.get_channel(LEAVE_CHANNEL_ID)
         if chan:
-            embed = discord.Embed(title="👋 Member Left", description=f"{member.mention} left KeyZone.", color=0xED4245)
-            embed.set_thumbnail(url=member.display_avatar.url)
-            await chan.send(embed=embed)
+            await chan.send(f"👋 **{member.name}** left the server.")
 
-# ======================
-# BAN LOG
-# ======================
 @bot.event
 async def on_member_ban(guild, user):
     chan = guild.get_channel(BANNED_CHANNEL_ID)
     if chan:
         reason = "No reason provided."
-        moderator = "Unknown"
         async for entry in guild.audit_logs(action=discord.AuditLogAction.ban, limit=5):
             if entry.target.id == user.id:
                 reason = entry.reason or reason
-                moderator = entry.user.mention
                 break
-        embed = discord.Embed(title="⛔ Member Banned", color=0xED4245)
-        embed.add_field(name="User", value=user.mention, inline=True)
-        embed.add_field(name="Banned By", value=moderator, inline=True)
-        embed.add_field(name="Reason", value=reason, inline=False)
-        embed.set_thumbnail(url=user.display_avatar.url)
-        await chan.send(embed=embed)
-
-# ======================
-# LOCK / UNLOCK
-# ======================
-@bot.command()
-@commands.has_permissions(manage_channels=True)
-async def lock(ctx):
-    await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=False)
-    await ctx.send("🔒 Channel locked.")
-
-@bot.command()
-@commands.has_permissions(manage_channels=True)
-async def unlock(ctx):
-    await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=True)
-    await ctx.send("🔓 Channel unlocked.")
+        await chan.send(f"⛔ **{user.name}** was banned. Reason: {reason}")
 
 bot.run(os.getenv("DISCORD_TOKEN"))
