@@ -7,17 +7,16 @@ import asyncio
 import io
 import requests
 
+# SETUP INTENTS
 intents = discord.Intents.default()
-intents.members = True
+intents.members = True       
+intents.message_content = True 
 intents.guilds = True
 intents.invites = True
-intents.moderation = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ======================
-# CHANNEL IDS
-# ======================
+# --- CHANNEL IDS ---
 WELCOME_CHANNEL_ID = 1484477611987046511
 INVITE_CHANNEL_ID = 1484477672993067018
 LEAVE_CHANNEL_ID = 1484477721303056405
@@ -27,7 +26,7 @@ invites = {}
 
 @bot.event
 async def on_ready():
-    print(f"KeyZone Guard is online!")
+    print(f"✅ KeyZone Guard is ACTIVE!")
     for guild in bot.guilds:
         try:
             invites[guild.id] = await guild.invites()
@@ -40,7 +39,7 @@ async def on_member_join(member):
     welcome_chan = guild.get_channel(WELCOME_CHANNEL_ID)
     invite_chan = guild.get_channel(INVITE_CHANNEL_ID)
     
-    # 1. Invite Tracking
+    # Track Inviter
     used_invite = None
     try:
         new_invites = await guild.invites()
@@ -52,66 +51,66 @@ async def on_member_join(member):
         invites[guild.id] = new_invites
     except:
         pass
-    inviter_name = used_invite.inviter.name if used_invite else "Unknown"
+    inviter = used_invite.inviter if used_invite else None
+    inviter_name = inviter.name if inviter else "Unknown"
 
-    # 2. Invite Channel Log
+    # 1. INVITE LOG (EMBED)
     if invite_chan:
-        await invite_chan.send(f"📩 **{member.name}** was invited by **{inviter_name}**")
+        embed = discord.Embed(title="📩 New Invite Used", color=0x2ecc71, timestamp=datetime.datetime.utcnow())
+        embed.add_field(name="Member", value=member.mention, inline=True)
+        embed.add_field(name="Invited By", value=inviter.mention if inviter else "Unknown", inline=True)
+        embed.set_thumbnail(url=member.display_avatar.url)
+        await invite_chan.send(embed=embed)
 
-    # 3. Image Generation
+    # 2. IMAGE GENERATION (The Graphic)
     try:
-        # Load Background
         bg = Image.open("welcome_bg.png").convert("RGBA")
         draw = ImageDraw.Draw(bg)
         
-        # Load Font (Tries font.ttf, then Arial, then default)
         try:
             font_name = ImageFont.truetype("font.ttf", 60)
             font_sub = ImageFont.truetype("font.ttf", 40)
         except:
-            print("Warning: font.ttf not found. Using default.")
             font_name = font_sub = ImageFont.load_default()
 
-        # Avatar Processing
-        url = member.avatar.url if member.avatar else member.default_avatar.url
-        response = requests.get(url)
-        avatar_img = Image.open(io.BytesIO(response.content)).convert("RGBA")
-        avatar_img = avatar_img.resize((260, 260), Image.Resampling.LANCZOS)
+        # Avatar
+        url = member.display_avatar.url
+        avatar_data = io.BytesIO(requests.get(url).content)
+        avatar_img = Image.open(avatar_data).convert("RGBA").resize((260, 260), Image.Resampling.LANCZOS)
         
         mask = Image.new("L", (260, 260), 0)
         ImageDraw.Draw(mask).ellipse((0, 0, 260, 260), fill=255)
         
-        # Draw on template
+        # Paste everything
         bg.paste(avatar_img, (652, 280), mask) 
         draw.text((70, 410), f"{member.name}", fill="white", font=font_name)
         draw.text((715, 712), f"{inviter_name}", fill="white", font=font_sub)
-        draw.text((455, 905), f"Member #{len(guild.members)}", fill="white", font=font_sub)
+        draw.text((455, 905), f"Member #{guild.member_count}", fill="white", font=font_sub)
 
-        # Send Image
         with io.BytesIO() as out:
             bg.save(out, format="PNG")
             out.seek(0)
             if welcome_chan:
-                await welcome_chan.send(f"Welcome {member.mention}!", file=discord.File(out, "welcome.png"))
+                # Send the image as an attachment with a mention
+                await welcome_chan.send(f"Welcome {member.mention} to **KeyZone**!", file=discord.File(out, "welcome.png"))
                 
     except Exception as e:
-        print(f"IMAGE ERROR DETAILS: {e}") # Check Railway logs for this message!
+        print(f"Error: {e}")
         if welcome_chan:
-            await welcome_chan.send(f"Welcome {member.mention} to KeyZone! (Image failed to load)")
+            await welcome_chan.send(f"Welcome {member.mention} to KeyZone!")
 
-# ======================
-# LEAVE & BAN LOGS
-# ======================
 @bot.event
 async def on_member_remove(member):
     await asyncio.sleep(1)
     try:
         await member.guild.fetch_ban(member)
         return 
-    except discord.NotFound:
+    except:
         chan = member.guild.get_channel(LEAVE_CHANNEL_ID)
         if chan:
-            await chan.send(f"👋 **{member.name}** left the server.")
+            embed = discord.Embed(title="👋 Member Left", description=f"**{member.name}** has left the server.", color=0xe74c3c)
+            embed.set_thumbnail(url=member.display_avatar.url)
+            await chan.send(embed=embed)
 
 @bot.event
 async def on_member_ban(guild, user):
@@ -122,6 +121,10 @@ async def on_member_ban(guild, user):
             if entry.target.id == user.id:
                 reason = entry.reason or reason
                 break
-        await chan.send(f"⛔ **{user.name}** was banned. Reason: {reason}")
+        embed = discord.Embed(title="⛔ Member Banned", color=0x000000)
+        embed.add_field(name="User", value=user.name, inline=True)
+        embed.add_field(name="Reason", value=reason, inline=False)
+        embed.set_thumbnail(url=user.display_avatar.url)
+        await chan.send(embed=embed)
 
 bot.run(os.getenv("DISCORD_TOKEN"))
