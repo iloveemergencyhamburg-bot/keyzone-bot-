@@ -33,6 +33,36 @@ async def on_ready():
         except:
             invites[guild.id] = []
 
+# --- LEADERBOARD COMMAND ---
+@bot.command()
+async def leaderboard(ctx):
+    """Displays the top 10 inviters in the server."""
+    try:
+        current_invites = await ctx.guild.invites()
+        # Create a dictionary to sum up uses per inviter
+        counts = {}
+        for inv in current_invites:
+            if inv.inviter:
+                counts[inv.inviter.name] = counts.get(inv.inviter.name, 0) + inv.uses
+        
+        # Sort and take top 10
+        sorted_counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        
+        description = ""
+        for i, (name, count) in enumerate(sorted_counts, 1):
+            description += f"**{i}. {name}** — {count} invites\n"
+        
+        embed = discord.Embed(
+            title="🏆 KeyZone Invite Leaderboard",
+            description=description or "No invites recorded yet.",
+            color=0xf1c40f,
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed.set_footer(text="Keep inviting to reach the top!")
+        await ctx.send(embed=embed)
+    except Exception as e:
+        await ctx.send(f"Error fetching leaderboard: {e}")
+
 @bot.event
 async def on_member_join(member):
     guild = member.guild
@@ -56,13 +86,13 @@ async def on_member_join(member):
 
     # 1. INVITE LOG (EMBED)
     if invite_chan:
-        embed = discord.Embed(title="📩 New Invite Used", color=0x2ecc71, timestamp=datetime.datetime.utcnow())
-        embed.add_field(name="Member", value=member.mention, inline=True)
+        embed = discord.Embed(title="📩 New Member Joined", color=0x2ecc71)
+        embed.add_field(name="User", value=member.mention, inline=True)
         embed.add_field(name="Invited By", value=inviter.mention if inviter else "Unknown", inline=True)
         embed.set_thumbnail(url=member.display_avatar.url)
         await invite_chan.send(embed=embed)
 
-    # 2. IMAGE GENERATION (The Graphic)
+    # 2. WELCOME IMAGE (Your Custom PNG)
     try:
         bg = Image.open("welcome_bg.png").convert("RGBA")
         draw = ImageDraw.Draw(bg)
@@ -73,15 +103,13 @@ async def on_member_join(member):
         except:
             font_name = font_sub = ImageFont.load_default()
 
-        # Avatar
+        # Avatar circle
         url = member.display_avatar.url
         avatar_data = io.BytesIO(requests.get(url).content)
         avatar_img = Image.open(avatar_data).convert("RGBA").resize((260, 260), Image.Resampling.LANCZOS)
-        
         mask = Image.new("L", (260, 260), 0)
         ImageDraw.Draw(mask).ellipse((0, 0, 260, 260), fill=255)
         
-        # Paste everything
         bg.paste(avatar_img, (652, 280), mask) 
         draw.text((70, 410), f"{member.name}", fill="white", font=font_name)
         draw.text((715, 712), f"{inviter_name}", fill="white", font=font_sub)
@@ -91,40 +119,17 @@ async def on_member_join(member):
             bg.save(out, format="PNG")
             out.seek(0)
             if welcome_chan:
-                # Send the image as an attachment with a mention
-                await welcome_chan.send(f"Welcome {member.mention} to **KeyZone**!", file=discord.File(out, "welcome.png"))
+                await welcome_chan.send(content=f"Welcome {member.mention} to **KeyZone**!", file=discord.File(out, "welcome.png"))
                 
     except Exception as e:
         print(f"Error: {e}")
-        if welcome_chan:
-            await welcome_chan.send(f"Welcome {member.mention} to KeyZone!")
 
 @bot.event
 async def on_member_remove(member):
-    await asyncio.sleep(1)
-    try:
-        await member.guild.fetch_ban(member)
-        return 
-    except:
-        chan = member.guild.get_channel(LEAVE_CHANNEL_ID)
-        if chan:
-            embed = discord.Embed(title="👋 Member Left", description=f"**{member.name}** has left the server.", color=0xe74c3c)
-            embed.set_thumbnail(url=member.display_avatar.url)
-            await chan.send(embed=embed)
-
-@bot.event
-async def on_member_ban(guild, user):
-    chan = guild.get_channel(BANNED_CHANNEL_ID)
+    chan = member.guild.get_channel(LEAVE_CHANNEL_ID)
     if chan:
-        reason = "No reason provided."
-        async for entry in guild.audit_logs(action=discord.AuditLogAction.ban, limit=5):
-            if entry.target.id == user.id:
-                reason = entry.reason or reason
-                break
-        embed = discord.Embed(title="⛔ Member Banned", color=0x000000)
-        embed.add_field(name="User", value=user.name, inline=True)
-        embed.add_field(name="Reason", value=reason, inline=False)
-        embed.set_thumbnail(url=user.display_avatar.url)
+        embed = discord.Embed(title="👋 Member Left", description=f"**{member.name}** left the server.", color=0xe74c3c)
+        embed.set_thumbnail(url=member.display_avatar.url)
         await chan.send(embed=embed)
 
 bot.run(os.getenv("DISCORD_TOKEN"))
